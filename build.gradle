@@ -118,6 +118,9 @@ dependencies {
     implementation 'mysql:mysql-connector-java'
     testImplementation 'com.h2database:h2'
 
+    // elasticsearch
+    implementation 'org.springframework.data:spring-data-elasticsearch'
+
     // liquibase
     implementation 'org.liquibase:liquibase-core'
     liquibaseRuntime(
