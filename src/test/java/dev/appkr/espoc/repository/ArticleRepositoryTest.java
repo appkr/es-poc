@@ -11,9 +11,20 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import dev.appkr.espoc.domain.Article;
 import dev.appkr.espoc.domain.Author;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-import org.elasticsearch.index.query.Operator;
+import java.util.Map;
+import org.elasticsearch.action.search.SearchRequest;
+import org.elasticsearch.action.search.SearchResponse;
+import org.elasticsearch.client.RequestOptions;
+import org.elasticsearch.client.RestHighLevelClient;
+import org.elasticsearch.search.aggregations.Aggregation;
+import org.elasticsearch.search.aggregations.AggregationBuilders;
+import org.elasticsearch.search.aggregations.bucket.terms.ParsedStringTerms;
+import org.elasticsearch.search.aggregations.bucket.terms.StringTerms;
+import org.elasticsearch.search.aggregations.bucket.terms.TermsAggregationBuilder;
+import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -40,6 +51,7 @@ class ArticleRepositoryTest {
   Logger log = LoggerFactory.getLogger(getClass());
 
   @Autowired ElasticsearchRestTemplate esTemplate;
+  @Autowired RestHighLevelClient esClient;
   @Autowired ArticleRepository repository;
 
   final Author johnSmith = Author.builder().name("John Smith").build();
@@ -99,8 +111,10 @@ class ArticleRepositoryTest {
 
   @Test
   void whenUpdate_thenSuccess() {
+    // When the user makes a typo in a word, it is still possible to match it with a search
+    // by specifying a fuzziness parameter, which allows inexact matching.
     NativeSearchQuery query = new NativeSearchQueryBuilder()
-        .withQuery(fuzzyQuery("title", "search")).build();
+        .withQuery(fuzzyQuery("title", "serch")).build();
     SearchHits<Article> hits = esTemplate.search(query, Article.class, IndexCoordinates.of("blog"));
     log.info("retrieved entities {}", hits.get().map(SearchHit::getContent).collect(toList()));
     assertEquals(1, hits.getTotalHits());
@@ -134,12 +148,29 @@ class ArticleRepositoryTest {
 
   @Test
   void whenOneTermMatch_thenRightOnesReturned() {
+    // default operator is OR, so the following query generates "Search AND engines"
     NativeSearchQuery query = new NativeSearchQueryBuilder()
         .withQuery(matchQuery("title", "Search engines").operator(AND)).build();
     SearchHits<Article> hits = esTemplate.search(query, Article.class, IndexCoordinates.of("blog"));
 
     log.info("retrieved entities {}", hits.get().map(SearchHit::getContent).collect(toList()));
     assertEquals(1, hits.getTotalHits());
+  }
+
+  @Test
+  void whenQueryAggregation_thenSuccess() throws IOException {
+    TermsAggregationBuilder termsAggBuilder = AggregationBuilders.terms("top_tags").field("tags");
+    SearchSourceBuilder builder = new SearchSourceBuilder().aggregation(termsAggBuilder);
+
+    SearchRequest req = new SearchRequest().indices("blog").source(builder);
+    SearchResponse res = esClient.search(req, RequestOptions.DEFAULT);
+
+    Map<String, Aggregation> results = res.getAggregations().asMap();
+    ParsedStringTerms topTags = (ParsedStringTerms) results.get("top_tags");
+    List<String> tags = topTags.getBuckets().stream().map(b -> b.getKeyAsString()).collect(toList());
+
+    log.info("topTags {}", tags);
+    assertEquals(asList("elasticsearch", "spring data", "search engines", "tutorial"), tags);
   }
 
   @BeforeEach
